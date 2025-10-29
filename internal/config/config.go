@@ -9,12 +9,12 @@ import (
 
 type Kafka struct {
 	BootstrapServersValue string `validate:"required" env:"BOOTSTRAP_SERVERS_VALUE"`
-	GroupID               string `validate:"required" env:"GROUP_ID"`
-	VkMessTopicName       string `validate:"required" env:"VK_MESS_TOPIC_NAME"`
-	NormalizerTopicName   string `env:"NORMALIZER_TOPIC_NAME"`
+	GroupID               string `validate:"required" env:"GROUP_ID_VK_NORMALIZER"`
+	VkMessTopicName       string `validate:"required" env:"TOPIC_NAME_VK_UPDATES"`
+	NormalizerTopicName   string `env:"TOPIC_NAME_NORMALIZED_MSG"`
 	SaslUsername          string `env:"SASL_USERNAME"`
 	SaslPassword          string `env:"SASL_PASSWORD"`
-	ClientID              string `env:"CLIENT_ID"`
+	ClientID              string `env:"CLIENT_ID_VK_NORMALIZER"`
 }
 
 type S3 struct {
@@ -26,8 +26,8 @@ type S3 struct {
 }
 
 type Config struct {
-	Kafka Kafka `envPrefix:"VK_NORM_KAFKA_"`
-	S3    S3    `envPrefix:"VK_NORM_S3_"`
+	Kafka Kafka `envPrefix:"KAFKA_"`
+	S3    S3    `envPrefix:"S3_"`
 }
 
 func Load() (*Config, error) {
