@@ -10,6 +10,9 @@
 # Environment and secrets
 .env
 .env.*
+config.yaml
+config.local.yaml
+client.properties
 secrets/
 *.pem
 *.key
