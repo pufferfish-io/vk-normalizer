@@ -1,42 +1,34 @@
-# vk-normalizer
+```mermaid
+flowchart LR
+  RAW["Kafka: vk_updates"] --> NORMALIZER["vk-normalizer"]
+  NORMALIZER -->|Скачать вложения| VKAPI["VK API"]
+  NORMALIZER -->|Загрузить в S3| S3["S3 / MinIO"]
+  NORMALIZER -->|Нормализованный JSON| TOPIC["Kafka: normalized_msg"]
+```
 
-## Что делает
+## О приложении
 
-1. Инициализирует zap-логгер, S3-аплоадер, Kafka producer/consumer и VK-парсер по переменным окружения.
-2. Подписывается на топик `TOPIC_NAME_VK_UPDATES`, десериализует `internal/vk.Update`, извлекает текст и вложения, формирует `contract.NormalizedMessage`.
-3. Для каждого вложения типа `photo` скачивает файл по URL, выбирает самую крупную картинку, загружает в S3 (`internal/s3.Uploader`) и сохраняет `S3URL`.
-4. Сериализует обновлённое сообщение в JSON и отправляет в топик `TOPIC_NAME_NORMALIZED_MSG` через Kafka (`internal/messaging.Producer`).
+vk-normalizer принимает события из Callback API ВКонтакте (которые уже положил `vk-forwarder`), нормализует структуру, скачивает вложения по прямым URL и размещает файлы в S3/MinIO. На выходе публикуется `NormalizedMessage` с текстом, метаданными и ссылками на объекты хранилища.
 
-## Запуск
+## Роль приложения в архитектуре проекта
 
-1. Настройте переменные окружения (ниже).
-2. Соберите и запустите локально:
+Сервис идёт сразу после входного вебхука VK:
+
+```mermaid
+flowchart LR
+    vk-forwarder --> vk-normalizer --> message-responder --> message-responder-ocr --> doc2text --> vk-response-preparer --> vk-sender
+```
+Он снимает с downstream‑части необходимость работать с HTTP ВКонтакте: после нормализатора все компоненты читают единый формат и обращаются только к Kafka+S3.
+
+## Локальный запуск
+
+1. Требования: Go ≥ 1.24, доступ к Kafka и к S3 (например, MinIO). Forwarder должен складывать события в `KAFKA_TOPIC_NAME_VK_UPDATES`.
+2. Экспортируйте переменные:
+   - Kafka (`KAFKA_`): `KAFKA_BOOTSTRAP_SERVERS_VALUE`, `KAFKA_GROUP_ID_VK_NORMALIZER`, `KAFKA_TOPIC_NAME_VK_UPDATES`, `KAFKA_TOPIC_NAME_NORMALIZED_MSG`, `KAFKA_CLIENT_ID_VK_NORMALIZER`, опционально `KAFKA_SASL_USERNAME`/`KAFKA_SASL_PASSWORD`.
+   - S3 (`S3_`): `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, `S3_USE_SSL`.
+3. Запустите сервис:
    ```bash
    go run ./cmd/vk-normalizer
    ```
-3. Или соберите Docker-образ и запустите с нужными переменными, пример:
-   ```bash
-   docker build -t vk-normalizer .
-   docker run --rm -e ... vk-normalizer
-   ```
-
-## Переменные окружения
-
-Каждое значение ожидается, кроме SASL-параметров, если Kafka доступна открыто.
-
-- `KAFKA_BOOTSTRAP_SERVERS_VALUE` — `host:port` для брокера.
-- `KAFKA_GROUP_ID_VK_NORMALIZER` — идентификатор consumer group (используется при подписке на входной топик).
-- `KAFKA_TOPIC_NAME_VK_UPDATES` — топик входных обновлений ВКонтакте.
-- `KAFKA_TOPIC_NAME_NORMALIZED_MSG` — топик, куда публикуется нормализованное сообщение (значение обязано быть непустым).
-- `KAFKA.Client_ID_VK_NORMALIZER` — общий client id для producer/consumer, отражается в метриках Sarama.
-- `KAFKA_SASL_USERNAME` и `KAFKA_SASL_PASSWORD` — имя/пароль для SCRAM-SHA512 (оставьте пустыми, если не требуется).
-- `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET` — параметры MinIO/S3.
-- `S3_USE_SSL` — включает HTTPS (по умолчанию `false`).
-
-## Примечания
-
-- Парсер `internal/vk/parser.go` сортирует доступные размеры фотографий по площади и берёт самый крупный URL для загрузки.
-- `internal/s3.Uploader` создаёт уникальный ключ через UUID и сохраняет оригинальное имя файла в metadata.
-- Все сообщения логируются через zap, Kafka producer работает с `Snappy`, SCRAM SHA512 и идемпотентностью.
-- `contract.NormalizedMessage` хранит исходный update (как `json.RawMessage`), текст, список медиа и метаинформацию (`internal/contract/normalized.go`).
-- Обработка потребляет сообщения по одному; ошибки логируются, Kafka не смещает оффсет, если handler возвращает ошибку.
+   или через Docker.
+4. Убедитесь, что файлы появляются в бакете, а JSON‑сообщения с полем `media[].s3_url` пишутся в `KAFKA_TOPIC_NAME_NORMALIZED_MSG`. Ошибки загрузки приведут к повторной обработке того же offset.
